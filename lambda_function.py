@@ -384,48 +384,12 @@ def lambda_handler(event, context):
             logger.info(f"=== UPLOAD SUCCESS ===")
             logger.info(f"Summary content:\n{summary_content}")
         
-        # ==================== NEW: DELETE RAW FILES ====================
-        logger.info(f"=== CLEANUP START ===")
-        deleted_count = 0
-        failed_deletions = []
-        
-        for key in gz_files:
-            try:
-                s3_client.delete_object(Bucket=bucket_name, Key=key)
-                logger.info(f"✓ Deleted: {key}")
-                deleted_count += 1
-            except ClientError as e:
-                logger.error(f"✗ Failed to delete {key}: {e}")
-                failed_deletions.append(key)
-        
-        logger.info(f"=== CLEANUP COMPLETE ===")
-        logger.info(f"Deleted {deleted_count}/{len(gz_files)} raw files")
-        
-        if failed_deletions:
-            logger.warning(f"Failed to delete: {failed_deletions}")
-        
-        # Optionally: Delete the raw/ folder itself if empty
-        try:
-            # Check if raw folder is empty
-            check_response = s3_client.list_objects_v2(
-                Bucket=bucket_name, 
-                Prefix=raw_folder,
-                MaxKeys=1
-            )
-            
-            if 'Contents' not in check_response:
-                logger.info(f"Raw folder {raw_folder} is empty (all files cleaned up)")
-        except Exception as e:
-            logger.warning(f"Could not verify folder emptiness: {e}")
-        # ==================== END CLEANUP ====================
-        
         return {
             'statusCode': 200,
             'body': json.dumps({
                 'message': 'Report processing complete',
                 'report_id': report_id,
                 'files_processed': len(gz_files),
-                'files_deleted': deleted_count,
                 'summary_key': f"{report_id}/summary.json"
             })
         }
