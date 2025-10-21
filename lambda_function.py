@@ -286,23 +286,21 @@ PROFILES_CONFIG = {
 def lambda_handler(event, context):
     """
     Processes .gz files from S3, parses competitive programming stats,
-    and generates a summary.json file.
+    generates summary.json, and deletes raw files.
     """
     try:
         logger.info(f"Lambda invoked with event: {json.dumps(event)}")
         
-        # 1. Extract bucket and key information
-        if 'Records' not in event or len(event['Records']) == 0:
-            raise ValueError("No S3 records found in event")
-            
         record = event['Records'][0]['s3']
         bucket_name = record['bucket']['name']
         triggering_key = unquote_plus(record['object']['key'])
         
         logger.info(f"Processing - Bucket: {bucket_name}, Key: {triggering_key}")
         
-        # 2. Extract report_id
-        report_id = os.path.dirname(os.path.dirname(triggering_key))
+        # Extract report_id
+        full_path = os.path.dirname(triggering_key)
+        report_id = os.path.dirname(full_path)
+        
         if not report_id:
             logger.error(f"Could not determine report_id from key: {triggering_key}")
             return {'statusCode': 400, 'body': 'Invalid object key structure'}
@@ -310,19 +308,20 @@ def lambda_handler(event, context):
         logger.info(f"Report ID: {report_id}")
         aggregated_stats = {}
         
-        # 3. List all .gz files for this report
-        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=f"{report_id}/")
+        # List all .gz files
+        raw_folder = f"{report_id}/raw/"
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=raw_folder)
         
         if 'Contents' not in response:
-            logger.warning(f"No objects found for prefix: {report_id}/")
+            logger.warning(f"No objects found for prefix: {raw_folder}")
             return {'statusCode': 200, 'body': 'No files to process'}
         
         gz_files = [obj['Key'] for obj in response.get('Contents', []) 
-                if obj['Key'].endswith('.gz')]
+                   if obj['Key'].endswith('.gz')]
         
         logger.info(f"Found {len(gz_files)} .gz files: {gz_files}")
         
-        # 4. Process each .gz file
+        # Process each platform file
         for key in gz_files:
             platform = os.path.basename(key).replace('.gz', '')
             
@@ -333,10 +332,8 @@ def lambda_handler(event, context):
             logger.info(f"Processing platform: {platform}")
             
             try:
-                # Use unique temp file names
                 temp_gz_path = f"/tmp/{report_id.replace('/', '_')}_{os.path.basename(key)}"
                 
-                # Download and decompress
                 s3_client.download_file(bucket_name, key, temp_gz_path)
                 logger.info(f"Downloaded {key} to {temp_gz_path}")
                 
@@ -345,13 +342,11 @@ def lambda_handler(event, context):
                 
                 logger.info(f"Decompressed {platform}, content length: {len(html_content)}")
                 
-                # Parse content
                 parser_func = PROFILES_CONFIG[platform]['parser']
                 aggregated_stats[platform] = parser_func(html_content)
                 
                 logger.info(f"Parsed {platform} successfully")
                 
-                # Clean up temp file
                 os.unlink(temp_gz_path)
                 
             except Exception as e:
@@ -361,20 +356,68 @@ def lambda_handler(event, context):
                     "message": str(e)
                 }
         
-        # 5. Upload summary
+        # Upload summary
         if aggregated_stats:
             summary_key = f"{report_id}/summary.json"
             summary_content = json.dumps(aggregated_stats, indent=4)
             
-            s3_client.put_object(
-                Bucket=bucket_name,
-                Key=summary_key,
-                Body=summary_content.encode('utf-8'),
-                ContentType='application/json'
+            logger.info(f"=== UPLOAD START ===")
+            logger.info(f"Uploading summary to: {summary_key}")
+            
+            try:
+                put_response = s3_client.put_object(
+                    Bucket=bucket_name,
+                    Key=summary_key,
+                    Body=summary_content.encode('utf-8'),
+                    ContentType='application/json'
+                )
+                logger.info(f"PutObject response ETag: {put_response.get('ETag')}")
+                
+                head_response = s3_client.head_object(Bucket=bucket_name, Key=summary_key)
+                logger.info(f"✓ VERIFIED: File exists, size={head_response['ContentLength']}")
+                
+            except ClientError as e:
+                logger.error(f"❌ S3 ERROR: {e.response['Error']['Code']}")
+                logger.error(f"Message: {e.response['Error']['Message']}")
+                raise
+            
+            logger.info(f"=== UPLOAD SUCCESS ===")
+            logger.info(f"Summary content:\n{summary_content}")
+        
+        # ==================== NEW: DELETE RAW FILES ====================
+        logger.info(f"=== CLEANUP START ===")
+        deleted_count = 0
+        failed_deletions = []
+        
+        for key in gz_files:
+            try:
+                s3_client.delete_object(Bucket=bucket_name, Key=key)
+                logger.info(f"✓ Deleted: {key}")
+                deleted_count += 1
+            except ClientError as e:
+                logger.error(f"✗ Failed to delete {key}: {e}")
+                failed_deletions.append(key)
+        
+        logger.info(f"=== CLEANUP COMPLETE ===")
+        logger.info(f"Deleted {deleted_count}/{len(gz_files)} raw files")
+        
+        if failed_deletions:
+            logger.warning(f"Failed to delete: {failed_deletions}")
+        
+        # Optionally: Delete the raw/ folder itself if empty
+        try:
+            # Check if raw folder is empty
+            check_response = s3_client.list_objects_v2(
+                Bucket=bucket_name, 
+                Prefix=raw_folder,
+                MaxKeys=1
             )
             
-            logger.info(f"Successfully uploaded {summary_key}")
-            logger.info(f"Summary: {summary_content}")
+            if 'Contents' not in check_response:
+                logger.info(f"Raw folder {raw_folder} is empty (all files cleaned up)")
+        except Exception as e:
+            logger.warning(f"Could not verify folder emptiness: {e}")
+        # ==================== END CLEANUP ====================
         
         return {
             'statusCode': 200,
@@ -382,6 +425,7 @@ def lambda_handler(event, context):
                 'message': 'Report processing complete',
                 'report_id': report_id,
                 'files_processed': len(gz_files),
+                'files_deleted': deleted_count,
                 'summary_key': f"{report_id}/summary.json"
             })
         }
