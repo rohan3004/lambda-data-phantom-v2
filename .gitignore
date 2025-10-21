@@ -1,0 +1,4 @@
+deployment.zip
+/package/*
+.idea
+.vscode
