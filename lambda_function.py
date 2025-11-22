@@ -359,7 +359,7 @@ def lambda_handler(event, context):
         # Upload summary
         if aggregated_stats:
             summary_key = f"{report_id}/summary.json"
-            summary_content = json.dumps(aggregated_stats, indent=4)
+            summary_content = json.dumps(aggregated_stats, separators=(',', ':'))
             
             logger.info(f"=== UPLOAD START ===")
             logger.info(f"Uploading summary to: {summary_key}")
