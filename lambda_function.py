@@ -242,30 +242,65 @@ def parse_geeksforgeeks_stats(html_content: str) -> dict:
         return {"status": "error", "message": "Missing HTML content for GeeksForGeeks."}
     
     soup = BeautifulSoup(html_content, "html.parser")
-    stats = {"source": "GeeksForGeeks", "status": "success"}
+    stats = {"source": "GeeksForGeeks", "status": "success", "platform_specific": {}}
     
     try:
-        streak_div = soup.select_one('.circularProgressBar_head_mid_streakCnt__MFOF1')
-        if streak_div:
-            stats['streak_current'] = clean_value(streak_div.contents[0].strip())
-
-        score_cards = soup.select('.scoreCard_head__nxXR8')
-        if len(score_cards) >= 3:
-            total_problems_div = score_cards[1].select_one('.scoreCard_head_left--score__oSi_x')
-            if total_problems_div:
-                stats['problems_solved_total'] = clean_value(total_problems_div.text.strip())
+        # --- 1. Score Cards (Coding Score, Problems Solved, Institute Rank, Articles) ---
+        # Finds the grid containing the 4 main stats
+        score_cards = soup.select('.ScoreContainer_score-card__zI4vG')
+        
+        for card in score_cards:
+            label_tag = card.select_one('.ScoreContainer_label__aVpLE')
+            value_tag = card.select_one('.ScoreContainer_value__7yy7h')
             
-            contest_rating_div = score_cards[2].select_one('.scoreCard_head_left--score__oSi_x')
-            if contest_rating_div:
-                stats['rating'] = clean_value(contest_rating_div.text.strip())
+            if label_tag and value_tag:
+                label = label_tag.text.strip().lower()
+                value_text = value_tag.text.strip()
+                value = clean_value(value_text)
+                
+                if 'coding score' in label:
+                    stats['rating'] = value
+                elif 'problems solved' in label:
+                    stats['problems_solved_total'] = value
+                elif 'institute rank' in label:
+                    stats['platform_specific']['institute_rank'] = value
+                elif 'articles published' in label:
+                    stats['platform_specific']['articles_published'] = value
 
-        problem_nav = soup.select('.problemNavbar_head_nav__a4K6P')
-        for item in problem_nav:
-            text = item.text.strip()
-            match = re.search(r'([A-Z]+)\s*\((\d+)\)', text)
+        # --- 2. POTD Streaks (Fire/Flame Section) ---
+        
+        # Current Streak (e.g., "140 Day POTD Streak")
+        current_streak_div = soup.select_one('.PotdContainer_streakText__oNgWh')
+        if current_streak_div:
+            stats['streak_current'] = clean_value(current_streak_div.text)
+
+        # Longest Streak & POTDs Solved (Side stats in the flame box)
+        potd_stats = soup.select('.PotdContainer_statItem__YU3BX')
+        for item in potd_stats:
+            label_tag = item.select_one('.PotdContainer_statLabel__tc6R1')
+            value_tag = item.select_one('.PotdContainer_statValue__nt1dr')
+            
+            if label_tag and value_tag:
+                label = label_tag.text.strip().lower()
+                # clean_value handles "323 Days" -> 323
+                value = clean_value(value_tag.text)
+                
+                if 'longest streak' in label:
+                    stats['streak_max'] = value
+                elif 'potds solved' in label:
+                    stats['platform_specific']['potds_solved'] = value
+
+        # --- 3. Problems by Difficulty (School, Basic, Easy, Medium, Hard) ---
+        # Selects the text inside the tabs: "SCHOOL (0)", "BASIC (9)", etc.
+        nav_items = soup.select('.ProblemNavbar_head_nav--text__7u4wN')
+        
+        for item in nav_items:
+            text = item.text.strip() # e.g., "SCHOOL (0)"
+            # Regex to capture name (Group 1) and count (Group 2)
+            match = re.search(r'([A-Z]+)\s*\((\d+)\)', text, re.IGNORECASE)
             if match:
-                difficulty = match.group(1).lower() # Convert to lowercase
-                count = clean_value(match.group(2))
+                difficulty = match.group(1).lower() # school, basic, easy...
+                count = int(match.group(2))
                 stats[f'problems_solved_{difficulty}'] = count
 
     except Exception as e:
