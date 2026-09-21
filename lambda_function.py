@@ -227,14 +227,16 @@ def parse_leetcode_stats(json_content) -> dict:
         # submissionCalendar when present; otherwise fall back to LeetCode's own
         # single-year `streak` field.
         if calendar.get("submissionCalendar"):
-            stats["streak_current"] = current_streak
-            stats["streak_max"] = max_streak
+            streak_value = max(current_streak, max_streak)
+            stats["streak_current"] = streak_value
+            stats["streak_max"] = streak_value
         elif calendar.get("streak") is not None:
             stats["streak_current"] = calendar["streak"]
             stats["streak_max"] = calendar["streak"]
         else:
-            stats["streak_current"] = current_streak
-            stats["streak_max"] = max_streak
+            streak_value = max(current_streak, max_streak)
+            stats["streak_current"] = streak_value
+            stats["streak_max"] = streak_value
 
         # --- Profile extras ---
         profile = matched_user.get("profile") or {}
