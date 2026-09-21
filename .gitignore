@@ -2,3 +2,22 @@ deployment.zip
 /package/*
 .idea
 .vscode
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Vendored Lambda dependencies (rebuilt at deploy time via pip --platform manylinux2014_x86_64)
+bs4/
+soupsieve/
+typing_extensions.py
+beautifulsoup4-*.dist-info/
+soupsieve-*.dist-info/
+typing_extensions-*.dist-info/
+
+# Local test fixtures
+*.html
+*.gz
